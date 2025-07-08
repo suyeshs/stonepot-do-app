@@ -53,3 +53,10 @@ export const names = [
   "Yvonne",
   "Zoe",
 ];
+
+export type User = {
+  id: string; // fingerprint
+  name: string;
+  createdAt: string;
+  cf?: Record<string, any>; // optional Cloudflare data
+};

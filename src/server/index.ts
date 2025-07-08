@@ -5,7 +5,33 @@ import {
   routePartykitRequest,
 } from "partyserver";
 
-import type { ChatMessage, Message } from "../shared";
+import type { ChatMessage, Message, User } from "../shared";
+
+const users: User[] = [];
+
+async function handleRegister(request: Request, cf: any): Promise<Response> {
+  const { fingerprint, name } = await request.json() as { fingerprint: string; name: string };
+  let user = users.find((u) => u.id === fingerprint);
+  if (!user) {
+    user = {
+      id: fingerprint,
+      name,
+      createdAt: new Date().toISOString(),
+      cf,
+    };
+    users.push(user);
+  }
+  return new Response(JSON.stringify(user), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleWhoami(request: Request): Promise<Response> {
+  const { fingerprint } = await request.json() as { fingerprint: string };
+  const user = users.find((u) => u.id === fingerprint);
+  if (!user) {
+    return new Response("Not found", { status: 404 });
+  }
+  return new Response(JSON.stringify(user), { headers: { "Content-Type": "application/json" } });
+}
 
 export class Chat extends Server<Env> {
   static options = { hibernate: true };
@@ -78,7 +104,14 @@ export class Chat extends Server<Env> {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (url.pathname === "/register" && request.method === "POST") {
+      return handleRegister(request, request.cf);
+    }
+    if (url.pathname === "/whoami" && request.method === "POST") {
+      return handleWhoami(request);
+    }
     return (
       (await routePartykitRequest(request, { ...env })) ||
       env.ASSETS.fetch(request)

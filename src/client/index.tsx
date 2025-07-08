@@ -10,12 +10,83 @@ import {
 } from "react-router";
 import { nanoid } from "nanoid";
 
-import { names, type ChatMessage, type Message } from "../shared";
+import { names, type ChatMessage, type Message, type User } from "../shared";
+
+function getFingerprint() {
+  // Simple fingerprint: userAgent + local random ID
+  let fp = localStorage.getItem("fingerprint");
+  if (!fp) {
+    fp = `${navigator.userAgent}-${nanoid(16)}`;
+    localStorage.setItem("fingerprint", fp);
+  }
+  return fp;
+}
+
+function NameForm({ onRegistered }: { onRegistered: (user: User) => void }) {
+  const [name, setName] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const fingerprint = getFingerprint();
+      const res = await fetch("/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprint, name }),
+      });
+      if (!res.ok) throw new Error("Registration failed");
+      const user = await res.json();
+      onRegistered(user);
+    } catch (err) {
+      setError("Could not register. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form className="row" onSubmit={handleSubmit}>
+      <input
+        type="text"
+        name="name"
+        className="ten columns my-input-text"
+        placeholder="Enter your name"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        required
+        autoComplete="off"
+      />
+      <button type="submit" className="send-message two columns" disabled={loading}>
+        {loading ? "Registering..." : "Join"}
+      </button>
+      {error && <div className="error">{error}</div>}
+    </form>
+  );
+}
 
 function App() {
-  const [name] = useState(names[Math.floor(Math.random() * names.length)]);
+  const [user, setUser] = React.useState<User | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const { room } = useParams();
+
+  React.useEffect(() => {
+    const fingerprint = getFingerprint();
+    fetch("/whoami", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fingerprint }),
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const user = await res.json();
+          setUser(user);
+        }
+      });
+  }, []);
 
   const socket = usePartySocket({
     party: "chat",
@@ -25,27 +96,23 @@ function App() {
       if (message.type === "add") {
         const foundIndex = messages.findIndex((m) => m.id === message.id);
         if (foundIndex === -1) {
-          // probably someone else who added a message
           setMessages((messages) => [
             ...messages,
             {
               id: message.id,
               content: message.content,
-              user: message.user,
+              user: message.user === "assistant" ? "stonepot" : message.user,
               role: message.role,
             },
           ]);
         } else {
-          // this usually means we ourselves added a message
-          // and it was broadcasted back
-          // so let's replace the message with the new message
           setMessages((messages) => {
             return messages
               .slice(0, foundIndex)
               .concat({
                 id: message.id,
                 content: message.content,
-                user: message.user,
+                user: message.user === "assistant" ? "stonepot" : message.user,
                 role: message.role,
               })
               .concat(messages.slice(foundIndex + 1));
@@ -58,17 +125,26 @@ function App() {
               ? {
                   id: message.id,
                   content: message.content,
-                  user: message.user,
+                  user: message.user === "assistant" ? "stonepot" : message.user,
                   role: message.role,
                 }
               : m,
           ),
         );
       } else {
-        setMessages(message.messages);
+        setMessages(
+          message.messages.map((m) => ({
+            ...m,
+            user: m.role === "assistant" ? "stonepot" : m.user,
+          }))
+        );
       }
     },
   });
+
+  if (!user) {
+    return <NameForm onRegistered={setUser} />;
+  }
 
   return (
     <div className="chat container">
@@ -88,19 +164,16 @@ function App() {
           const chatMessage: ChatMessage = {
             id: nanoid(8),
             content: content.value,
-            user: name,
+            user: user.name,
             role: "user",
           };
           setMessages((messages) => [...messages, chatMessage]);
-          // we could broadcast the message here
-
           socket.send(
             JSON.stringify({
               type: "add",
               ...chatMessage,
             } satisfies Message),
           );
-
           content.value = "";
         }}
       >
@@ -108,7 +181,7 @@ function App() {
           type="text"
           name="content"
           className="ten columns my-input-text"
-          placeholder={`Hello ${name}! Type a message...`}
+          placeholder={`Hello ${user.name}! Type a message...`}
           autoComplete="off"
         />
         <button type="submit" className="send-message two columns">
